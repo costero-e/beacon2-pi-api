@@ -120,13 +120,13 @@ def get_descendants_and_similarities():
             definitive_similarity_low=definitive_similarity_medium+definitive_similarity_low
             print(f"\n===== {ontology_id}:{code} =====")
             print('-----DESCENDANTS-----')
-            print(list_of_existing_descendants)
+            print(f"count={len(list_of_existing_descendants)}")
             print('-----SIMILARITY_HIGH-----')
-            print(definitive_similarity_high)
+            print(f"count={len(definitive_similarity_high)}")
             print('-----SIMILARITY_MEDIUM-----')
-            print(definitive_similarity_medium)
+            print(f"count={len(definitive_similarity_medium)}")
             print('-----SIMILARITY_LOW-----')
-            print(definitive_similarity_low)
+            print(f"count={len(definitive_similarity_low)}")
 
             dict={}
             if list_of_existing_descendants != [] or definitive_similarity_low != []:
