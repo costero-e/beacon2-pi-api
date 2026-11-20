@@ -4,7 +4,7 @@ from beacon.exceptions.exceptions import DatabaseIsDown
 
 def create_ssh(host, username, password):
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy()) 
+    ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
     ssh.connect(host, username=username, password=password)
     return ssh
 
