@@ -2,8 +2,17 @@
 name: Automatic CodeQL Autofix
 
 on:
+  # Run automatically after CodeQL Security Analysis completes on main
+  workflow_run:
+    workflows: ["CodeQL Security Analysis"]
+    types: [completed]
+    branches: [main]
+
+  # Daily fallback at 04:00 UTC
   schedule:
-    - cron: "7,22,33,37,52 * * * *"
+    - cron: "0 4 * * *"
+
+  # Allow manual execution
   workflow_dispatch:
 
 permissions: {}
@@ -14,22 +23,23 @@ concurrency:
 
 jobs:
   autofix:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      - name: Check scheduler trigger
+      - name: Check workflow trigger
         run: |
-          echo "Workflow started!"
+          echo "Automatic CodeQL Autofix started!"
           echo "Event: ${{ github.event_name }}"
           echo "UTC time: $(date -u)"
           echo "Branch: ${{ github.ref }}"
+
       - name: Find alerts and create draft PRs
         env:
           AUTOFIX_TOKEN: ${{ secrets.AUTOFIX_TOKEN }}
           OWNER: costero-e
           REPO: beacon2-pi-api
-          GH_RUN_ID: ${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -48,7 +58,8 @@ jobs:
                 -H "Accept: application/vnd.github+json" \
                 -H "Authorization: Bearer $AUTOFIX_TOKEN" \
                 -H "X-GitHub-Api-Version: 2026-03-10" \
-                "$API$path" -d "$data"
+                "$API$path" \
+                -d "$data"
             else
               curl --silent --show-error --fail-with-body \
                 -X "$method" \
@@ -100,15 +111,16 @@ jobs:
             echo "Processing alert #$ALERT_NUMBER"
             echo "======================================"
 
-            BRANCH="codeql-autofix-alert-${ALERT_NUMBER}-${GH_RUN_ID}"
+            BRANCH="codeql-autofix-alert-$ALERT_NUMBER"
 
             echo "Checking for an existing open PR..."
 
             existing="$(api GET \
-              "$BASE/pulls?state=open&head=$OWNER:codeql-autofix-alert-$ALERT_NUMBER&base=main")"
+              "$BASE/pulls?state=open&head=$OWNER:$BRANCH&base=main")"
 
             if [[ "$(jq 'length' <<< "$existing")" -gt 0 ]]; then
-              echo "Alert #$ALERT_NUMBER already has an open PR. Skipping."
+              echo "Alert #$ALERT_NUMBER already has an open PR."
+              echo "Skipping."
               continue
             fi
 
@@ -150,17 +162,23 @@ jobs:
 
             description="$(jq -r '.description // "Suggested security fix."' <<< "$result")"
 
-            echo "Creating branch $BRANCH..."
+            echo "Checking whether branch already exists..."
 
-            main_ref="$(api GET "$BASE/git/ref/heads/main")"
-            main_sha="$(jq -r '.object.sha' <<< "$main_ref")"
+            if api GET "$BASE/git/ref/heads/$BRANCH" >/dev/null 2>&1; then
+              echo "Branch already exists. Reusing it."
+            else
+              echo "Creating branch $BRANCH..."
 
-            ref_payload="$(jq -n \
-              --arg ref "refs/heads/$BRANCH" \
-              --arg sha "$main_sha" \
-              '{ref: $ref, sha: $sha}')"
+              main_ref="$(api GET "$BASE/git/ref/heads/main")"
+              main_sha="$(jq -r '.object.sha' <<< "$main_ref")"
 
-            api POST "$BASE/git/refs" "$ref_payload" >/dev/null
+              ref_payload="$(jq -n \
+                --arg ref "refs/heads/$BRANCH" \
+                --arg sha "$main_sha" \
+                '{ref: $ref, sha: $sha}')"
+
+              api POST "$BASE/git/refs" "$ref_payload" >/dev/null
+            fi
 
             echo "Committing Autofix..."
 
