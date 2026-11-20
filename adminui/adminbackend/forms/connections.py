@@ -37,10 +37,16 @@ class ConnectionsForm(forms.Form):
         self.dire = kwargs.pop('dire')
         super(ConnectionsForm,self).__init__(*args,**kwargs)
 
+        base_dir = "/home/app/web/beacon/connections"
+        base_real = os.path.realpath(base_dir)
+        conf_path = os.path.realpath(os.path.join(base_real, self.dire, "conf.py"))
+        if not conf_path.startswith(base_real + os.sep):
+            raise forms.ValidationError("Invalid connection path")
+
         # assign a (computed, I assume) default value to the choice field
-        with open("/home/app/web/beacon/connections/" + self.dire + "/conf.py") as f:
+        with open(conf_path) as f:
             lines = f.readlines()
-        with open("/home/app/web/beacon/connections/" + self.dire + "/conf.py", "r") as f:
+        with open(conf_path, "r") as f:
             for line in lines:
                 if 'database_host' in str(line):
                     placeholder = formatting_field(self, line)
