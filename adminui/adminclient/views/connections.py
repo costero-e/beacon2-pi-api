@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect
 from django.views.generic import TemplateView
 from django.http import HttpResponseRedirect, HttpResponseBadRequest
 import logging
+import os
 from pymongo.mongo_client import MongoClient
 from django.urls import resolve
 from adminbackend.forms.connections import ConnectionsForm, ChooseConnection, LinkConnection
@@ -14,6 +15,15 @@ import logging
 complete_module='beacon.connections.'+config.query_budget_database
 import importlib
 module = importlib.import_module(complete_module, package=None)
+
+CONNECTIONS_BASE_DIR = "/home/app/web/beacon/connections"
+
+def _safe_connection_conf_path(connection_dir):
+    candidate = os.path.realpath(os.path.join(CONNECTIONS_BASE_DIR, connection_dir, "conf.py"))
+    base = os.path.realpath(CONNECTIONS_BASE_DIR)
+    if os.path.commonpath([base, candidate]) != base:
+        raise ValueError("Invalid connection path")
+    return candidate
 
 LOG = logging.getLogger(__name__)
 fmt = '%(levelname)s - %(asctime)s - %(message)s'
@@ -124,9 +134,10 @@ def default_view(request):
                     Certificate = form.cleaned_data['Certificate']
                     CAFile = form.cleaned_data['CAFile']
                     Cluster = form.cleaned_data['Cluster']
-                    with open("/home/app/web/beacon/connections/"+form.dire+"/conf.py") as f:
+                    conf_path = _safe_connection_conf_path(form.dire)
+                    with open(conf_path) as f:
                         lines = f.readlines()
-                    with open("/home/app/web/beacon/connections/"+form.dire+"/conf.py", "w") as f:
+                    with open(conf_path, "w") as f:
                         new_lines =''
                         for line in lines:
                             if 'database_host' in str(line):

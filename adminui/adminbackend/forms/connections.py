@@ -4,6 +4,15 @@ import logging
 import os
 from beacon.conf.conf_override import config
 
+CONNECTIONS_BASE_DIR = "/home/app/web/beacon/connections"
+
+def _safe_connection_conf_path(connection_dir):
+    candidate = os.path.realpath(os.path.join(CONNECTIONS_BASE_DIR, connection_dir, "conf.py"))
+    base = os.path.realpath(CONNECTIONS_BASE_DIR)
+    if os.path.commonpath([base, candidate]) != base:
+        raise ValueError("Invalid connection path")
+    return candidate
+
 LOG = logging.getLogger(__name__)
 fmt = '%(levelname)s - %(asctime)s - %(message)s'
 formatter = logging.Formatter(fmt)
@@ -38,9 +47,10 @@ class ConnectionsForm(forms.Form):
         super(ConnectionsForm,self).__init__(*args,**kwargs)
 
         # assign a (computed, I assume) default value to the choice field
-        with open("/home/app/web/beacon/connections/" + self.dire + "/conf.py") as f:
+        conf_path = _safe_connection_conf_path(self.dire)
+        with open(conf_path) as f:
             lines = f.readlines()
-        with open("/home/app/web/beacon/connections/" + self.dire + "/conf.py", "r") as f:
+        with open(conf_path, "r") as f:
             for line in lines:
                 if 'database_host' in str(line):
                     placeholder = formatting_field(self, line)
