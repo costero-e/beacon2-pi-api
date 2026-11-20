@@ -3,7 +3,7 @@ name: Automatic CodeQL Autofix
 
 on:
   schedule:
-    - cron: "7,22,30,37,52 * * * *"
+    - cron: "7,22,33,37,52 * * * *"
   workflow_dispatch:
 
 permissions: {}
