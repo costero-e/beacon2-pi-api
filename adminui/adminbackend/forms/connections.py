@@ -12,6 +12,16 @@ sh.setLevel('NOTSET')
 sh.setFormatter(formatter)
 LOG.addHandler(sh)
 
+def get_connection_conf_path(dire):
+    base_dir = "/home/app/web/beacon/connections"
+    base_real = os.path.realpath(base_dir)
+    conf_path = os.path.realpath(os.path.join(base_real, str(dire), "conf.py"))
+    if not conf_path.startswith(base_real + os.sep):
+        raise ValueError("Invalid connection path")
+    if not os.path.isfile(conf_path):
+        raise ValueError("Connection config not found")
+    return conf_path
+
 def formatting_field(self, line):
     linestring=str(line)
     splitted_line=linestring.split("=")
@@ -37,10 +47,11 @@ class ConnectionsForm(forms.Form):
         self.dire = kwargs.pop('dire')
         super(ConnectionsForm,self).__init__(*args,**kwargs)
 
+        conf_path = get_connection_conf_path(self.dire)
         # assign a (computed, I assume) default value to the choice field
-        with open("/home/app/web/beacon/connections/" + self.dire + "/conf.py") as f:
+        with open(conf_path) as f:
             lines = f.readlines()
-        with open("/home/app/web/beacon/connections/" + self.dire + "/conf.py", "r") as f:
+        with open(conf_path, "r") as f:
             for line in lines:
                 if 'database_host' in str(line):
                     placeholder = formatting_field(self, line)

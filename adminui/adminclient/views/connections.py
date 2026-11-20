@@ -4,7 +4,7 @@ from django.http import HttpResponseRedirect, HttpResponseBadRequest
 import logging
 from pymongo.mongo_client import MongoClient
 from django.urls import resolve
-from adminbackend.forms.connections import ConnectionsForm, ChooseConnection, LinkConnection
+from adminbackend.forms.connections import ConnectionsForm, ChooseConnection, LinkConnection, get_connection_conf_path
 from beacon.conf.conf_override import config
 import subprocess
 from django.contrib.auth.decorators import login_required, permission_required
@@ -124,9 +124,10 @@ def default_view(request):
                     Certificate = form.cleaned_data['Certificate']
                     CAFile = form.cleaned_data['CAFile']
                     Cluster = form.cleaned_data['Cluster']
-                    with open("/home/app/web/beacon/connections/"+form.dire+"/conf.py") as f:
+                    conf_path = get_connection_conf_path(form.dire)
+                    with open(conf_path) as f:
                         lines = f.readlines()
-                    with open("/home/app/web/beacon/connections/"+form.dire+"/conf.py", "w") as f:
+                    with open(conf_path, "w") as f:
                         new_lines =''
                         for line in lines:
                             if 'database_host' in str(line):
