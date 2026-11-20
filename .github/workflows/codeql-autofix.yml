@@ -1,40 +1,32 @@
 
-name: CodeQL Classic Autofix
+name: Automatic CodeQL Autofix
 
 on:
+  schedule:
+    - cron: "*/5 * * * *"
   workflow_dispatch:
-    inputs:
-      alert_number:
-        description: "CodeQL alert number to fix"
-        required: true
-        type: string
 
 permissions: {}
 
 concurrency:
-  group: codeql-autofix-${{ inputs.alert_number }}
+  group: automatic-codeql-autofix
   cancel-in-progress: false
 
 jobs:
   autofix:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 360
 
     steps:
-      - name: Generate and publish classic Autofix
+      - name: Find alerts and create draft PRs
         env:
           AUTOFIX_TOKEN: ${{ secrets.AUTOFIX_TOKEN }}
           OWNER: costero-e
           REPO: beacon2-pi-api
-          ALERT_NUMBER: ${{ inputs.alert_number }}
+          GH_RUN_ID: ${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
-
-          if [[ ! "$ALERT_NUMBER" =~ ^[0-9]+$ ]]; then
-            echo "Invalid alert number."
-            exit 1
-          fi
 
           API="https://api.github.com"
           BASE="/repos/$OWNER/$REPO"
@@ -50,8 +42,7 @@ jobs:
                 -H "Accept: application/vnd.github+json" \
                 -H "Authorization: Bearer $AUTOFIX_TOKEN" \
                 -H "X-GitHub-Api-Version: 2026-03-10" \
-                "$API$path" \
-                -d "$data"
+                "$API$path" -d "$data"
             else
               curl --silent --show-error --fail-with-body \
                 -X "$method" \
@@ -62,119 +53,145 @@ jobs:
             fi
           }
 
-          echo "Checking CodeQL alert #$ALERT_NUMBER..."
+          echo "Finding open CodeQL alerts on main..."
 
-          alert="$(api GET "$BASE/code-scanning/alerts/$ALERT_NUMBER")"
+          alerts_json='[]'
+          page=1
 
-          if ! jq -e '
-            .tool.name == "CodeQL" and
-            .state == "open" and
-            .most_recent_instance.ref == "refs/heads/main"
-          ' <<< "$alert" >/dev/null; then
-            echo "Alert must be an open CodeQL alert on main."
-            exit 1
-          fi
+          while true; do
+            page_data="$(api GET \
+              "$BASE/code-scanning/alerts?state=open&ref=refs/heads/main&per_page=100&page=$page")"
 
-          echo "Requesting classic Autofix..."
+            count="$(jq 'length' <<< "$page_data")"
 
-          api POST \
-            "$BASE/code-scanning/alerts/$ALERT_NUMBER/autofix" \
-            >/dev/null
+            alerts_json="$(jq -s '.[0] + .[1]' \
+              <(printf '%s' "$alerts_json") \
+              <(printf '%s' "$page_data"))"
 
-          echo "Waiting for the fix..."
-
-          success=false
-
-          for attempt in $(seq 1 60); do
-            result="$(api GET \
-              "$BASE/code-scanning/alerts/$ALERT_NUMBER/autofix")"
-
-            status="$(jq -r '.status // "unknown"' <<< "$result")"
-
-            echo "Attempt $attempt: $status"
-
-            if [[ "$status" == "success" ]]; then
-              success=true
-              break
-            fi
-
-            if [[ "$status" == "failure" || "$status" == "failed" || "$status" == "error" ]]; then
-              jq -r '.description // "Autofix failed."' <<< "$result"
-              exit 1
-            fi
-
-            sleep 10
+            [[ "$count" -lt 100 ]] && break
+            page=$((page + 1))
           done
 
-          if [[ "$success" != "true" ]]; then
-            echo "Autofix did not complete within 10 minutes."
-            exit 1
-          fi
+          mapfile -t ALERTS < <(
+            jq -r '
+              .[]
+              | select(.tool.name == "CodeQL")
+              | select(.most_recent_instance.ref == "refs/heads/main")
+              | .number
+            ' <<< "$alerts_json"
+          )
 
-          description="$(jq -r '.description // "Suggested security fix."' <<< "$result")"
+          echo "Found ${#ALERTS[@]} open CodeQL alerts."
 
-          BRANCH="codeql-autofix-alert-$ALERT_NUMBER"
-
-          echo "Checking for an existing open PR..."
-
-          existing="$(api GET \
-            "$BASE/pulls?state=open&head=$OWNER:$BRANCH&base=main")"
-
-          if [[ "$(jq 'length' <<< "$existing")" -gt 0 ]]; then
-            echo "An open PR already exists:"
-            jq -r '.[0].html_url' <<< "$existing"
+          if [[ ${#ALERTS[@]} -eq 0 ]]; then
+            echo "No open CodeQL alerts to process."
             exit 0
           fi
 
-          echo "Creating branch from main..."
+          for ALERT_NUMBER in "${ALERTS[@]}"; do
+            echo ""
+            echo "======================================"
+            echo "Processing alert #$ALERT_NUMBER"
+            echo "======================================"
 
-          main_ref="$(api GET "$BASE/git/ref/heads/main")"
-          main_sha="$(jq -r '.object.sha' <<< "$main_ref")"
+            BRANCH="codeql-autofix-alert-${ALERT_NUMBER}-${GH_RUN_ID}"
 
-          ref_payload="$(jq -n \
-            --arg ref "refs/heads/$BRANCH" \
-            --arg sha "$main_sha" \
-            '{ref: $ref, sha: $sha}')"
+            echo "Checking for an existing open PR..."
 
-          api POST "$BASE/git/refs" "$ref_payload" >/dev/null
+            existing="$(api GET \
+              "$BASE/pulls?state=open&head=$OWNER:codeql-autofix-alert-$ALERT_NUMBER&base=main")"
 
-          echo "Committing Autofix to $BRANCH..."
+            if [[ "$(jq 'length' <<< "$existing")" -gt 0 ]]; then
+              echo "Alert #$ALERT_NUMBER already has an open PR. Skipping."
+              continue
+            fi
 
-          commit_payload="$(jq -n \
-            --arg target_ref "refs/heads/$BRANCH" \
-            --arg message "Apply classic Copilot Autofix for CodeQL alert #$ALERT_NUMBER" \
-            '{target_ref: $target_ref, message: $message}')"
+            echo "Requesting classic Autofix..."
 
-          api POST \
-            "$BASE/code-scanning/alerts/$ALERT_NUMBER/autofix/commits" \
-            "$commit_payload" >/dev/null
+            api POST \
+              "$BASE/code-scanning/alerts/$ALERT_NUMBER/autofix" \
+              >/dev/null
 
-          echo "Opening draft pull request..."
+            echo "Waiting for Autofix..."
 
-          pr_payload="$(jq -n \
-            --arg title "Security: fix CodeQL alert #$ALERT_NUMBER" \
-            --arg head "$BRANCH" \
-            --arg base "main" \
-            --arg body "## Automated CodeQL remediation
+            success=false
 
-          This draft PR contains a suggested fix generated by GitHub classic Copilot Autofix.
+            for attempt in $(seq 1 60); do
+              result="$(api GET \
+                "$BASE/code-scanning/alerts/$ALERT_NUMBER/autofix")"
 
-          **CodeQL alert:** #$ALERT_NUMBER
+              status="$(jq -r '.status // "unknown"' <<< "$result")"
 
-          **Autofix description:** $description
+              echo "Attempt $attempt: $status"
 
-          Please review the changes and run all tests before merging.
+              if [[ "$status" == "success" ]]; then
+                success=true
+                break
+              fi
 
-          This PR was created using the classic Autofix API." \
-            '{title: $title, head: $head, base: $base, body: $body, draft: true}')"
+              if [[ "$status" == "failure" || "$status" == "failed" || "$status" == "error" ]]; then
+                echo "Autofix failed for alert #$ALERT_NUMBER."
+                break
+              fi
 
-          pr="$(api POST "$BASE/pulls" "$pr_payload")"
+              sleep 10
+            done
 
-          PR_URL="$(jq -r '.html_url' <<< "$pr")"
+            if [[ "$success" != "true" ]]; then
+              echo "Skipping alert #$ALERT_NUMBER."
+              continue
+            fi
 
-          echo "Draft PR created: $PR_URL"
+            description="$(jq -r '.description // "Suggested security fix."' <<< "$result")"
 
-          {
-            echo "## CodeQL Autofix"
-            echo "Created draft PR: $PR_URL"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "Creating branch $BRANCH..."
+
+            main_ref="$(api GET "$BASE/git/ref/heads/main")"
+            main_sha="$(jq -r '.object.sha' <<< "$main_ref")"
+
+            ref_payload="$(jq -n \
+              --arg ref "refs/heads/$BRANCH" \
+              --arg sha "$main_sha" \
+              '{ref: $ref, sha: $sha}')"
+
+            api POST "$BASE/git/refs" "$ref_payload" >/dev/null
+
+            echo "Committing Autofix..."
+
+            commit_payload="$(jq -n \
+              --arg target_ref "refs/heads/$BRANCH" \
+              --arg message "Apply classic Copilot Autofix for CodeQL alert #$ALERT_NUMBER" \
+              '{target_ref: $target_ref, message: $message}')"
+
+            api POST \
+              "$BASE/code-scanning/alerts/$ALERT_NUMBER/autofix/commits" \
+              "$commit_payload" >/dev/null
+
+            echo "Creating draft PR..."
+
+            pr_payload="$(jq -n \
+              --arg title "Security: fix CodeQL alert #$ALERT_NUMBER" \
+              --arg head "$BRANCH" \
+              --arg base "main" \
+              --arg body "Automated draft PR containing a suggested fix generated by GitHub classic Copilot Autofix.
+
+          CodeQL alert: #$ALERT_NUMBER
+
+          Autofix description: $description
+
+          Please review the changes and run tests before merging." \
+              '{title:$title, head:$head, base:$base, body:$body, draft:true}')"
+
+            pr="$(api POST "$BASE/pulls" "$pr_payload")"
+            PR_URL="$(jq -r '.html_url' <<< "$pr")"
+
+            echo "Created: $PR_URL"
+
+            {
+              echo "### CodeQL alert #$ALERT_NUMBER"
+              echo "Draft PR: $PR_URL"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+          done
+
+          echo "Finished processing CodeQL alerts."
