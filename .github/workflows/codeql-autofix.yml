@@ -18,6 +18,12 @@ jobs:
     timeout-minutes: 360
 
     steps:
+      - name: Check scheduler trigger
+        run: |
+          echo "Workflow started!"
+          echo "Event: ${{ github.event_name }}"
+          echo "UTC time: $(date -u)"
+          echo "Branch: ${{ github.ref }}"
       - name: Find alerts and create draft PRs
         env:
           AUTOFIX_TOKEN: ${{ secrets.AUTOFIX_TOKEN }}
