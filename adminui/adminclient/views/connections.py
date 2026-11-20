@@ -8,11 +8,35 @@ from adminbackend.forms.connections import ConnectionsForm, ChooseConnection, Li
 from beacon.conf.conf_override import config
 import subprocess
 from django.contrib.auth.decorators import login_required, permission_required
+from cryptography.fernet import Fernet
 
 import logging
 
 complete_module='beacon.connections.'+config.query_budget_database
 import importlib
+import os
+
+
+_ENCRYPTED_PREFIX = "enc::"
+
+
+def _get_cipher():
+    key = os.environ.get("BEACON_SECRET_KEY")
+    if not key:
+        raise ValueError("BEACON_SECRET_KEY must be set")
+    if isinstance(key, str):
+        key = key.encode()
+    return Fernet(key)
+
+
+def _encrypt_if_needed(value):
+    if value is None:
+        return value
+    if isinstance(value, str) and value.startswith(_ENCRYPTED_PREFIX):
+        return value
+    cipher = _get_cipher()
+    token = cipher.encrypt(str(value).encode()).decode()
+    return _ENCRYPTED_PREFIX + token
 module = importlib.import_module(complete_module, package=None)
 
 LOG = logging.getLogger(__name__)
@@ -140,9 +164,9 @@ def default_view(request):
                             elif 'username' in str(line):
                                 new_lines+="username="+'"'+User+'"'+"\n"
                             elif 'database_password' in str(line):
-                                new_lines+="database_password="+'"'+Password+'"'+"\n"
+                                new_lines+="database_password="+'"'+_encrypt_if_needed(Password)+'"'+"\n"
                             elif 'password' in str(line):
-                                new_lines+="password="+'"'+Password+'"'+"\n"
+                                new_lines+="password="+'"'+_encrypt_if_needed(Password)+'"'+"\n"
                             elif 'database_name' in str(line):
                                 new_lines+="database_name="+'"'+Name+'"'+"\n"
                             elif 'database_auth_source' in str(line):
